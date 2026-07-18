@@ -1,0 +1,261 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Жiжo · intonation &amp; confession</title>
+<style>
+  :root{
+    --field:#241f2e; --panel:#2d2739; --line:#453c56;
+    --bone:#e6ddcf; --dim:#9c92a8;
+    --rubric:#c1443a;
+    --dom:#c9a227; --med:#b6493c; --ton:#3e8e7e;
+    --ok:#7fb069; --bad:#c1443a;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;background:var(--field);color:var(--bone);
+    font:16px/1.55 Georgia,'Times New Roman',serif}
+  main{max-width:880px;margin:0 auto;padding:40px 20px 80px}
+  h1{font-size:2.1rem;font-weight:normal;margin:0 0 2px;letter-spacing:.01em}
+  .sub{color:var(--dim);font-style:italic;margin:0 0 30px}
+  .rubric{font-family:Georgia,serif;font-variant:small-caps;letter-spacing:.14em;
+    color:var(--rubric);font-size:.82rem;margin:26px 0 8px}
+  /* lattice */
+  #lattice{display:grid;grid-template-columns:70px repeat(27,1fr);gap:2px;
+    background:var(--panel);border:1px solid var(--line);padding:10px;border-radius:4px}
+  .vlabel{font-variant:small-caps;letter-spacing:.1em;font-size:.78rem;
+    color:var(--dim);align-self:center}
+  .cell{aspect-ratio:1/1.35;border-radius:2px;background:#1c1826;
+    transition:background .12s, box-shadow .12s}
+  @media (prefers-reduced-motion: reduce){.cell{transition:none}}
+  .cell.on-d{background:var(--dom);box-shadow:0 0 8px var(--dom)}
+  .cell.on-m{background:var(--med);box-shadow:0 0 8px var(--med)}
+  .cell.on-t{background:var(--ton);box-shadow:0 0 8px var(--ton)}
+  /* controls */
+  textarea{width:100%;background:var(--panel);border:1px solid var(--line);
+    color:var(--bone);font:1.05rem Georgia,serif;padding:10px 12px;border-radius:4px;
+    resize:vertical;min-height:52px}
+  textarea:focus,button:focus{outline:2px solid var(--dom);outline-offset:2px}
+  .row{display:flex;gap:10px;flex-wrap:wrap;margin-top:10px}
+  button{background:transparent;border:1px solid var(--line);color:var(--bone);
+    font:inherit;font-variant:small-caps;letter-spacing:.1em;padding:8px 18px;
+    border-radius:4px;cursor:pointer}
+  button:hover{border-color:var(--dom)}
+  button[disabled]{opacity:.4;cursor:default}
+  button.listening{border-color:var(--rubric);color:var(--rubric)}
+  /* results */
+  #confession{background:var(--panel);border:1px solid var(--line);border-radius:4px;
+    padding:14px 16px;min-height:56px;font-family:ui-monospace,'Cascadia Mono',Consolas,monospace;
+    font-size:1.02rem;white-space:pre-wrap;word-break:break-all}
+  #verdict{margin-top:8px;font-variant:small-caps;letter-spacing:.1em;font-size:.85rem}
+  #verdict.ok{color:var(--ok)} #verdict.bad{color:var(--bad)}
+  .conf{color:var(--dim);font-size:.8rem;font-family:ui-monospace,monospace;margin-top:6px}
+  .note{color:var(--dim);font-size:.86rem;margin-top:30px;border-top:1px solid var(--line);
+    padding-top:14px}
+  .k{color:var(--dom)} .k2{color:var(--ton)}
+</style>
+</head>
+<body>
+<main>
+  <h1>Жiжo</h1>
+  <p class="sub">intonation and confession in 27-EDO — the decoder hears only the audio</p>
+
+  <div class="rubric">the lattice · one column per edon, one row per voice</div>
+  <div id="lattice" aria-label="edon lattice"></div>
+
+  <div class="rubric">the text to be intonated</div>
+  <textarea id="text" spellcheck="false">Hello, World!</textarea>
+  <div class="row">
+    <button id="intonate">Intonate</button>
+    <button id="confess" disabled>Confess the recording</button>
+    <button id="mic">Listen at the door</button>
+  </div>
+
+  <div class="rubric">what the machine heard</div>
+  <div id="confession" aria-live="polite"></div>
+  <div id="verdict"></div>
+  <div class="conf" id="conf"></div>
+
+  <p class="note">
+    <span class="k">Intonate</span> renders the text as chordal trytes — one tribble per voice,
+    Dominant/Mediant/Tonic at 1760/880/440&nbsp;Hz, one 27-EDO step per edon, with the Diatonic
+    a step above — and plays the buffer. <span class="k">Confess</span> runs a Goertzel bank over
+    that same rendered audio and reassembles characters from pitch alone; the round trip is exact
+    when the verdict says so. <span class="k2">Listen at the door</span> opens the microphone and
+    decodes the loudest stable chord in the room, quarter-second by quarter-second — sing to it,
+    or play it a recording of itself.
+  </p>
+</main>
+
+<script>
+const BANDS = { d:1760, m:880, t:440 };
+const RATE = 44100, DUR = 0.25, SHARP = 0.4;
+const trib = v => [ (v/729)|0, ((v/27)|0)%27, v%27 ];
+const efreq = (band,d) => BANDS[band] * Math.pow(2, d/27);
+
+/* ---------- lattice ---------- */
+const lat = document.getElementById('lattice');
+const rows = ['d','m','t'], cells = {};
+for(const r of rows){
+  const lab = document.createElement('div');
+  lab.className='vlabel';
+  lab.textContent = r==='d'?'Dominant':r==='m'?'Mediant':'Tonic';
+  lat.appendChild(lab);
+  cells[r]=[];
+  for(let i=0;i<27;i++){
+    const c=document.createElement('div'); c.className='cell';
+    lat.appendChild(c); cells[r].push(c);
+  }
+}
+function light(digits){ // digits: [D,M,T] or null
+  rows.forEach((r,ri)=>cells[r].forEach((c,i)=>{
+    c.className = 'cell' + (digits && digits[ri]===i ? ' on-'+r : '');
+  }));
+}
+
+/* ---------- encode ---------- */
+let rendered = null, renderedText = null, playSrc = null;
+const AC = new (window.AudioContext||window.webkitAudioContext)();
+
+async function renderText(text){
+  const n = [...text].length;
+  const off = new OfflineAudioContext(1, Math.ceil(RATE*DUR*n), RATE);
+  const buf = off.createBuffer(1, off.length, RATE);
+  const ch = buf.getChannelData(0);
+  [...text].forEach((c,i)=>{
+    const dg = trib(c.codePointAt(0));
+    const fs = dg.map((d,vi)=>efreq(rows[vi],d));
+    const sh = dg.map((d,vi)=>efreq(rows[vi],(d+1)%27));
+    const o = Math.floor(i*RATE*DUR);
+    for(let s=0;s<RATE*DUR && o+s<ch.length;s++){
+      const t=s/RATE; let v=0;
+      for(const f of fs) v += Math.sin(2*Math.PI*f*t);
+      for(const f of sh) v += SHARP*Math.sin(2*Math.PI*f*t);
+      ch[o+s]=v/ (3+3*SHARP);
+    }
+  });
+  const src = off.createBufferSource(); src.buffer=buf; src.connect(off.destination); src.start();
+  return off.startRendering();
+}
+
+document.getElementById('intonate').onclick = async ()=>{
+  const text = document.getElementById('text').value;
+  if(!text) return;
+  rendered = await renderText(text); renderedText = text;
+  document.getElementById('confess').disabled = false;
+  setConfession('', '', '');
+  if(playSrc){ try{playSrc.stop()}catch(e){} }
+  await AC.resume();
+  playSrc = AC.createBufferSource(); playSrc.buffer = rendered;
+  playSrc.connect(AC.destination); playSrc.start();
+  // animate lattice in time
+  const chars=[...text]; const t0 = AC.currentTime;
+  (function step(){
+    const i = Math.floor((AC.currentTime-t0)/DUR);
+    if(i < chars.length){ light(trib(chars[i].codePointAt(0))); requestAnimationFrame(step); }
+    else light(null);
+  })();
+};
+
+/* ---------- decode ---------- */
+function goertzel(seg, off, len, f){
+  const k = Math.round(len*f/RATE), w = 2*Math.PI*k/len, co = 2*Math.cos(w);
+  let s0=0,s1=0,s2=0;
+  for(let i=0;i<len;i++){ s0 = seg[off+i] + co*s1 - s2; s2=s1; s1=s0; }
+  return s1*s1 + s2*s2 - co*s1*s2;
+}
+function decodeWindow(data, off, len){
+  const digits=[], confs=[];
+  for(const r of rows){
+    let best=-1, bi=0, second=0;
+    for(let d=0; d<27; d++){
+      const e = goertzel(data, off, len, efreq(r,d));
+      if(e>best){ second=best; best=e; bi=d; } else if(e>second) second=e;
+    }
+    digits.push(bi); confs.push(best/(second||1e-9));
+  }
+  return { ch: String.fromCodePoint(digits[0]*729+digits[1]*27+digits[2]),
+           digits, conf: Math.min(...confs) };
+}
+function setConfession(txt, verdict, conf){
+  document.getElementById('confession').textContent = txt;
+  const v=document.getElementById('verdict');
+  v.textContent = verdict; v.className = verdict.startsWith('exact')?'ok':verdict?'bad':'';
+  document.getElementById('conf').textContent = conf;
+}
+
+document.getElementById('confess').onclick = ()=>{
+  if(!rendered) return;
+  const data = rendered.getChannelData(0);
+  const n = [...renderedText].length, seg = Math.floor(data.length/n);
+  let out='', confs=[];
+  for(let i=0;i<n;i++){
+    const r = decodeWindow(data, i*seg, seg);
+    out += r.ch; confs.push(r.conf.toFixed(1));
+  }
+  const exact = out === renderedText;
+  setConfession(out,
+    exact ? 'exact round trip · ' + n + ' characters recovered from audio alone'
+          : 'mismatch — the machine heard otherwise',
+    'per-chord confidence (best/second energy): ' + confs.join(' '));
+};
+
+/* ---------- microphone ---------- */
+let micOn=false, micStream=null, micCtx=null;
+const micBtn = document.getElementById('mic');
+micBtn.onclick = async ()=>{
+  if(micOn){
+    micOn=false; micBtn.classList.remove('listening');
+    micBtn.textContent='Listen at the door';
+    if(micStream) micStream.getTracks().forEach(t=>t.stop());
+    if(micCtx) micCtx.close();
+    light(null); return;
+  }
+  try{ micStream = await navigator.mediaDevices.getUserMedia({audio:true}); }
+  catch(e){ setConfession('', 'microphone unavailable — allow access and try again',''); return; }
+  micOn=true; micBtn.classList.add('listening'); micBtn.textContent='Stop listening';
+  setConfession('', '', '');
+  micCtx = new AudioContext();
+  const srcN = micCtx.createMediaStreamSource(micStream);
+  const proc = micCtx.createScriptProcessor(4096,1,1);
+  srcN.connect(proc); proc.connect(micCtx.destination);
+  let ring = new Float32Array(0), heard='';
+  proc.onaudioprocess = e=>{
+    if(!micOn) return;
+    const inb = e.inputBuffer.getChannelData(0);
+    const merged = new Float32Array(ring.length+inb.length);
+    merged.set(ring); merged.set(inb, ring.length); ring = merged;
+    const win = Math.floor(micCtx.sampleRate*DUR);
+    while(ring.length >= win){
+      let rms=0; for(let i=0;i<win;i++) rms+=ring[i]*ring[i];
+      rms = Math.sqrt(rms/win);
+      if(rms > 0.01){
+        const r = decodeWindowAtRate(ring, 0, win, micCtx.sampleRate);
+        if(r.conf > 3){
+          heard += r.ch; light(r.digits);
+          setConfession(heard, 'listening — appending chords heard with confidence > 3',
+            'last confidence: '+r.conf.toFixed(1));
+        }
+      }
+      ring = ring.slice(win);
+    }
+  };
+};
+function decodeWindowAtRate(data, off, len, rate){
+  const g=(f)=>{ const k=Math.round(len*f/rate), w=2*Math.PI*k/len, co=2*Math.cos(w);
+    let s1=0,s2=0; for(let i=0;i<len;i++){const s0=data[off+i]+co*s1-s2; s2=s1; s1=s0;}
+    return s1*s1+s2*s2-co*s1*s2; };
+  const digits=[],confs=[];
+  for(const r of rows){
+    let best=-1,bi=0,second=0;
+    for(let d=0;d<27;d++){ const e=g(efreq(r,d));
+      if(e>best){second=best;best=e;bi=d;} else if(e>second) second=e; }
+    digits.push(bi); confs.push(best/(second||1e-9));
+  }
+  return { ch:String.fromCodePoint(digits[0]*729+digits[1]*27+digits[2]),
+           digits, conf: Math.min(...confs) };
+}
+light(null);
+</script>
+</body>
+</html>

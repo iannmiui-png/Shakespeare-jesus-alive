@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Жiжo · the workspace</title>
+<style>
+  :root{
+    --field:#241f2e; --panel:#2d2739; --line:#453c56;
+    --bone:#e6ddcf; --dim:#9c92a8; --rubric:#c1443a; --dom:#c9a227;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%;background:var(--field);color:var(--bone);
+    font:16px/1.5 Georgia,'Times New Roman',serif;display:flex;flex-direction:column}
+  header{display:flex;align-items:baseline;gap:18px;flex-wrap:wrap;
+    padding:14px 20px;border-bottom:1px solid var(--line)}
+  h1{font-size:1.25rem;font-weight:normal;margin:0}
+  .sub{color:var(--dim);font-style:italic;font-size:.9rem}
+  nav{margin-left:auto;display:flex;gap:8px}
+  nav button{background:transparent;border:1px solid var(--line);color:var(--bone);
+    font:inherit;font-variant:small-caps;letter-spacing:.1em;font-size:.85rem;
+    padding:6px 16px;border-radius:4px;cursor:pointer}
+  nav button:hover{border-color:var(--dom)}
+  nav button:focus{outline:2px solid var(--dom);outline-offset:2px}
+  nav button[aria-current="true"]{border-color:var(--rubric);color:var(--rubric)}
+  iframe{flex:1;width:100%;border:0;background:var(--field)}
+</style>
+</head>
+<body>
+  <header>
+    <h1>Жiжo</h1>
+    <span class="sub">intonation, confession, and small universes</span>
+    <nav>
+      <button id="b-prover" aria-current="true">The prover</button>
+      <button id="b-automaton" aria-current="false">The automaton</button>
+    </nav>
+  </header>
+  <iframe id="frame" src="zhizho_prover.html"
+          title="Жiжo workspace page"
+          allow="microphone; autoplay"></iframe>
+<script>
+  const frame=document.getElementById('frame');
+  const tabs={ 'b-prover':'zhizho_prover.html', 'b-automaton':'zhizho_automaton.html' };
+  for(const id in tabs){
+    document.getElementById(id).onclick=function(){
+      frame.src=tabs[id];
+      for(const other in tabs)
+        document.getElementById(other).setAttribute('aria-current', other===id);
+    };
+  }
+</script>
+</body>
+</html>

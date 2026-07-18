@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Жiжo · what a cellular automaton sounds like</title>
+<style>
+  :root{
+    --field:#241f2e; --panel:#2d2739; --line:#453c56;
+    --bone:#e6ddcf; --dim:#9c92a8; --rubric:#c1443a;
+    --dom:#c9a227; --med:#b6493c; --ton:#3e8e7e;
+    --t0:#1c1826; --t1:#6a5a86; --t2:#e6ddcf;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;background:var(--field);color:var(--bone);
+    font:16px/1.55 Georgia,'Times New Roman',serif}
+  main{max-width:880px;margin:0 auto;padding:40px 20px 80px}
+  h1{font-size:2.1rem;font-weight:normal;margin:0 0 2px}
+  .sub{color:var(--dim);font-style:italic;margin:0 0 26px}
+  .rubric{font-variant:small-caps;letter-spacing:.14em;color:var(--rubric);
+    font-size:.82rem;margin:24px 0 8px}
+  canvas{display:block;width:100%;background:var(--t0);
+    border:1px solid var(--line);border-radius:4px;image-rendering:pixelated}
+  .row{display:flex;gap:10px;flex-wrap:wrap;margin-top:10px;align-items:center}
+  button,select{background:transparent;border:1px solid var(--line);color:var(--bone);
+    font:inherit;font-variant:small-caps;letter-spacing:.08em;padding:8px 16px;
+    border-radius:4px;cursor:pointer}
+  select option{background:var(--panel)}
+  button:hover{border-color:var(--dom)}
+  button:focus,select:focus{outline:2px solid var(--dom);outline-offset:2px}
+  #run.on{border-color:var(--rubric);color:var(--rubric)}
+  label{color:var(--dim);font-size:.9rem}
+  input[type=range]{accent-color:var(--dom)}
+  #scripture{background:var(--panel);border:1px solid var(--line);border-radius:4px;
+    padding:14px 16px;min-height:64px;max-height:150px;overflow-y:auto;
+    font-family:ui-monospace,'Cascadia Mono',Consolas,monospace;font-size:1.05rem;
+    white-space:pre-wrap;word-break:break-all}
+  #now{font-family:ui-monospace,monospace;color:var(--dim);font-size:.85rem;margin-top:8px}
+  .note{color:var(--dim);font-size:.86rem;margin-top:28px;
+    border-top:1px solid var(--line);padding-top:14px}
+  .k{color:var(--dom)}
+</style>
+</head>
+<body>
+<main>
+  <h1>The automaton intones</h1>
+  <p class="sub">nine ternary cells · one generation = one tryte = one chord = one character</p>
+
+  <div class="rubric">the tape · nine cells wide, time flows downward</div>
+  <canvas id="tape" width="9" height="64" aria-label="cellular automaton history"></canvas>
+
+  <div class="row">
+    <button id="run">Begin</button>
+    <select id="rule" aria-label="rule">
+      <option value="add">(l + c + r) mod 3 — the fractal</option>
+      <option value="add2">(l + 2c + r) mod 3 — the weave</option>
+      <option value="mul">(l·c + r + 1) mod 3 — the wanderer</option>
+      <option value="r30">rule 30 on trits — the storm</option>
+    </select>
+    <select id="seed" aria-label="seed">
+      <option value="one">single seed</option>
+      <option value="rand">random tape</option>
+      <option value="word">seed with "Ж" (1414 → trits)</option>
+    </select>
+    <label>tempo <input id="tempo" type="range" min="1" max="8" value="3"></label>
+  </div>
+
+  <div class="rubric">the scripture it writes</div>
+  <div id="scripture" aria-live="off"></div>
+  <div id="now"></div>
+
+  <p class="note">
+    Each generation of the tape is nine trits, which is one tryte: the first three cells are the
+    <span class="k">Dominant</span> tribble, the middle three the <span class="k">Mediant</span>,
+    the last three the <span class="k">Tonic</span>, and the chord sounds at
+    band × 2<sup>digit/27</sup> with the Diatonic a step above. The character stream below is the
+    same trytes read as codepoints — the automaton is not being set to music; the automaton is
+    a Жiжo program discovered running. The additive rules produce the Sierpiński triangle mod 3,
+    so what you hear under "the fractal" is self-similarity as harmony: the audio at generation
+    3n echoes the audio at generation n.
+  </p>
+</main>
+
+<script>
+const BANDS=[1760,880,440], SHARP=0.4, W=9;
+const ef=(b,d)=>BANDS[b]*Math.pow(2,d/27);
+
+/* ---------- CA ---------- */
+let tape=[], history=[];
+function seedTape(kind){
+  if(kind==='rand') tape=[...Array(W)].map(()=>Math.floor(Math.random()*3));
+  else if(kind==='word'){
+    let v='Ж'.codePointAt(0); tape=[];
+    for(let i=0;i<W;i++){ tape.unshift(v%3); v=(v/3)|0; }
+  } else { tape=Array(W).fill(0); tape[4]=1; }
+  history=[tape.slice()];
+}
+const RULES={
+  add:(l,c,r)=>(l+c+r)%3,
+  add2:(l,c,r)=>(l+2*c+r)%3,
+  mul:(l,c,r)=>(l*c+r+1)%3,
+  r30:(l,c,r)=>((l>0)^((c>0)||(r>0)))?((l+r)%3||1):0,
+};
+function step(){
+  const rule=RULES[document.getElementById('rule').value];
+  tape = tape.map((c,i)=>rule(tape[(i+W-1)%W], c, tape[(i+1)%W]));
+  history.push(tape.slice());
+  if(history.length>64) history.shift();
+}
+function tryteOf(t){
+  const digit=(a)=>t[a]*9+t[a+1]*3+t[a+2];
+  return { D:digit(0), M:digit(3), T:digit(6) };
+}
+
+/* ---------- drawing ---------- */
+const cv=document.getElementById('tape'), cx=cv.getContext('2d');
+const COLS=['#1c1826','#6a5a86','#e6ddcf'];
+function draw(){
+  cx.clearRect(0,0,W,64);
+  history.forEach((row,y)=>row.forEach((v,x)=>{
+    cx.fillStyle=COLS[v]; cx.fillRect(x,y,1,1);
+  }));
+}
+
+/* ---------- audio: six oscillators, retuned per generation ---------- */
+let AC=null, oscs=[], gain=null, running=false, timer=null;
+function ensureAudio(){
+  if(AC) return;
+  AC=new (window.AudioContext||window.webkitAudioContext)();
+  gain=AC.createGain(); gain.gain.value=0.14; gain.connect(AC.destination);
+  for(let i=0;i<6;i++){
+    const o=AC.createOscillator(); o.type='sine';
+    const g=AC.createGain(); g.gain.value = i<3 ? 1 : SHARP;
+    o.connect(g); g.connect(gain); o.start(); oscs.push(o);
+  }
+}
+function sound(tr){
+  const t=AC.currentTime+0.02, f=[ef(0,tr.D),ef(1,tr.M),ef(2,tr.T)];
+  f.forEach((fr,i)=>{
+    oscs[i].frequency.setTargetAtTime(fr,t,0.005);
+    oscs[i+3].frequency.setTargetAtTime(fr*Math.pow(2,1/27),t,0.005);
+  });
+}
+
+/* ---------- the stream ---------- */
+const scriptEl=document.getElementById('scripture'), nowEl=document.getElementById('now');
+let written='';
+function generation(){
+  step(); draw();
+  const tr=tryteOf(tape);
+  sound(tr);
+  const v=tr.D*729+tr.M*27+tr.T;
+  written+=String.fromCodePoint(v);
+  if(written.length>600) written=written.slice(-600);
+  scriptEl.textContent=written;
+  scriptEl.scrollTop=scriptEl.scrollHeight;
+  nowEl.textContent=`gen ${history.length<64?history.length:'…'} · tryte ${v} · `+
+    `D=${tr.D} M=${tr.M} T=${tr.T} · U+${v.toString(16).toUpperCase().padStart(4,'0')}`;
+}
+function setTimer(){
+  clearInterval(timer);
+  timer=setInterval(generation, 1000/document.getElementById('tempo').value);
+}
+document.getElementById('tempo').oninput=()=>{ if(running) setTimer(); };
+['rule','seed'].forEach(id=>document.getElementById(id).onchange=()=>{
+  seedTape(document.getElementById('seed').value); written=''; scriptEl.textContent='';
+  draw();
+});
+document.getElementById('run').onclick=async function(){
+  if(running){ running=false; clearInterval(timer);
+    if(gain) gain.gain.setTargetAtTime(0,AC.currentTime,0.05);
+    this.textContent='Begin'; this.classList.remove('on'); return; }
+  ensureAudio(); await AC.resume();
+  gain.gain.setTargetAtTime(0.14,AC.currentTime,0.05);
+  running=true; this.textContent='Silence'; this.classList.add('on');
+  setTimer();
+};
+seedTape('one'); draw();
+</script>
+</body>
+</html>
