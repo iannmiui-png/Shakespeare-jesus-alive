@@ -266,51 +266,67 @@ function setConfession(txt, verdict, conf){
 document.getElementById('confess').onclick = ()=>{
   if(!rendered) return;
   const data = rendered.getChannelData(0);
-  const AWIN = Math.floor(RATE*0.09), AHOP = Math.floor(RATE*0.03);   // 90 ms windows, 30 ms hop
-  // hop-wise: voiced? which chord?
-  const hops=[];
-  for(let o=0; o+AWIN<=data.length; o+=AHOP){
-    let e=0; for(let j=0;j<AWIN;j+=4){ const v=data[o+j]; e+=v*v; }
-    const rms=Math.sqrt(e/(AWIN/4));
-    if(rms<1e-4){ hops.push(null); continue; }
-    const r=decodeWindow(data,o,AWIN);
-    hops.push(r.conf>2 ? r : {ch:'?',conf:0});
+  const AHOP = Math.floor(RATE*0.03), AWIN = Math.floor(RATE*0.09);
+  const nh = Math.floor(data.length/AHOP);
+  // voicing per 30 ms slice (not per straddling window) -> silence durations stay true
+  const voiced = new Array(nh);
+  for(let i=0;i<nh;i++){
+    let e=0; for(let j=0;j<AHOP;j+=2){ const v=data[i*AHOP+j]; e+=v*v; }
+    voiced[i] = Math.sqrt(e/(AHOP/2)) > 1e-4;
   }
-  // run-length over hop chords (nulls = silence; low-conf hops adopt neighbors)
-  const runs=[];
-  for(const h of hops){
-    const id = h===null ? null : h.ch;
-    if(runs.length && (runs.at(-1).id===id || (id==='?'&&runs.at(-1).id!==null))) runs.at(-1).n++;
-    else if(runs.length && runs.at(-1).id==='?' && id!==null){ runs.at(-1).id=id; runs.at(-1).n++; }
-    else runs.push({id,n:1});
+  // chord id per slice, decoded from a window kept inside the voiced region
+  const ids = new Array(nh).fill(null);
+  for(let i=0;i<nh;i++){
+    if(!voiced[i]) continue;
+    let o = i*AHOP - Math.floor((AWIN-AHOP)/2);
+    o = Math.max(0, Math.min(o, data.length-AWIN));
+    const r = decodeWindow(data, o, AWIN);
+    ids[i] = r;
   }
-  const secs = r => r.n*AHOP/RATE + (AWIN-AHOP)/RATE*0; // hop-count duration
-  // musician's walk: tempo assumed steady unless the audio forces a bpm()
-  let out='', confs=[], nchars=0, nsleeps=0, ntempi=0, curDur=DUR;
-  const mk=[...lastMarkers]; let clock=0;
-  const dueMarkers = t => { while(mk.length && mk[0].t <= t+0.045){ out += `\n${mk.shift().name}: `; } };
-  for(const r of runs){
-    const d = r.n*AHOP/RATE;
-    dueMarkers(clock);
-    if(r.id===null){ if(d>=0.05){ out+=`sleep(${(Math.round(d/0.01)*0.01).toFixed(2)})`; nsleeps++; } clock+=d; continue; }
-    if(r.id==='?'){ clock+=d; continue; }
-    let n = Math.max(1, Math.round(d/curDur));
-    if(Math.abs(d/n - curDur) > 0.25*curDur){
-      // tempo change: this run is one (or more) chars at a new tempo
-      n = 1; const nd = d;
-      let b = 60/nd; if(Math.abs(b-Math.round(b)) < b*0.06) b = Math.round(b);
-      out += `bpm(${fmt(b)})`; ntempi++; curDur = 60/b;
-      n = Math.max(1, Math.round(d/curDur));
+  // runs over slice ids
+  let runs=[];
+  for(let i=0;i<nh;i++){
+    const id = voiced[i] ? ids[i].ch : null;
+    if(runs.length && runs.at(-1).id===id) runs.at(-1).n++;
+    else runs.push({id, i, n:1});
+  }
+  // minimum note: voiced runs under 3 slices are boundary artifacts -> merge into longer neighbor
+  const MINN = 3;
+  for(let pass=0; pass<3; pass++){
+    const merged=[];
+    for(const r of runs){
+      if(r.id!==null && r.n<MINN && merged.length && merged.at(-1).id!==null){
+        merged.at(-1).n += r.n; continue;
+      }
+      if(merged.length && merged.at(-1).id===r.id){ merged.at(-1).n += r.n; continue; }
+      merged.push({...r});
     }
-    for(let i=0;i<n;i++){ dueMarkers(clock + i*curDur); out += r.id; }
-    nchars += n; confs.push(String(n)); clock += d;
+    runs = merged;
   }
-  dueMarkers(clock+1);
+  // musician's walk
+  let out='', confs=[], nchars=0, nsleeps=0, ntempi=0, curDur=DUR;
+  const mk=[...lastMarkers];
+  const dueMarkers = t => { while(mk.length && mk[0].t <= t+0.05){ out += `\n${mk.shift().name}: `; } };
+  for(const r of runs){
+    const t0r = r.i*AHOP/RATE, d = r.n*AHOP/RATE;
+    dueMarkers(t0r);
+    if(r.id===null){ if(d>=0.05){ out+=`sleep(${(Math.round(d/0.01)*0.01).toFixed(2)})`; nsleeps++; } continue; }
+    let n = Math.max(1, Math.round(d/curDur));
+    if(Math.abs(d/n - curDur) > 0.12*curDur && d >= 0.15){
+      let b = 60/d;
+      // try small repeat counts at the new tempo too: prefer the slowest tempo >= 60/0.4? keep n=1
+      if(Math.abs(b-Math.round(b)) < b*0.06) b = Math.round(b);
+      if(b <= 400){ out += `bpm(${fmt(b)})`; ntempi++; curDur = 60/b; n = 1; }
+      else n = Math.max(1, Math.round(d/curDur));
+    }
+    for(let i=0;i<n;i++){ dueMarkers(t0r + i*curDur); out += r.id; }
+    nchars += n; confs.push(String(n));
+  }
+  dueMarkers(1e9);
   const exact = out === renderedText;
   setConfession(out,
-    exact ? `exact round trip · ${nchars} characters, ${nsleeps} silences, ${ntempi} tempo changes — from audio alone`
-          : 'transcription differs — see the machine\u2019s hearing above vs. your score',
-
+    exact ? `exact round trip \u00b7 ${nchars} characters, ${nsleeps} silences, ${ntempi} tempo changes \u2014 from audio alone`
+          : 'transcription differs \u2014 the machine\u2019s hearing above vs. your score',
     'run lengths: ' + confs.join(' '));
 };
 
