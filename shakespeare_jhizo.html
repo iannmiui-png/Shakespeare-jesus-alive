@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Жiжo · intonation &amp; confession</title>
+<title>Жiжospeare! Jesus alive!</title>
 <style>
   :root{
     --field:#241f2e; --panel:#2d2739; --line:#453c56;
@@ -168,7 +168,7 @@ const normalize = segs => segs.map(x =>
   x.b!==undefined ? `bpm(${fmt(x.b)})` : x.t).join('');
 
 /* ---------- encode ---------- */
-let rendered = null, renderedText = null, playSrc = null, lastMarkers = [];
+let rendered = null, renderedText = null, renderedChars = '', playSrc = null, lastMarkers = [];
 const AC = new (window.AudioContext||window.webkitAudioContext)();
 
 async function renderText(segs){
@@ -211,6 +211,7 @@ document.getElementById('intonate').onclick = async ()=>{
   if(!raw) return;
   const segs = parseScore(raw);
   rendered = await renderText(segs); renderedText = normalize(segs);
+  renderedChars = segs.filter(g=>g.t!==undefined).map(g=>g.t).join('');
   document.getElementById('confess').disabled = false;
   setConfession('', '', '');
   if(playSrc){ try{playSrc.stop()}catch(e){} }
@@ -310,23 +311,31 @@ document.getElementById('confess').onclick = ()=>{
   for(const r of runs){
     const t0r = r.i*AHOP/RATE, d = r.n*AHOP/RATE;
     dueMarkers(t0r);
-    if(r.id===null){ if(d>=0.05){ out+=`sleep(${(Math.round(d/0.01)*0.01).toFixed(2)})`; nsleeps++; } continue; }
+    if(r.id===null){
+      if(d>=0.05){
+        const label = d<2 ? '*brief pause*' : d<5 ? '*pause*' : '*long pause*';
+        out += `\n${label}\n`; nsleeps++;
+      }
+      continue;
+    }
     let n = Math.max(1, Math.round(d/curDur));
     if(Math.abs(d/n - curDur) > 0.12*curDur && d >= 0.15){
       let b = 60/d;
       // try small repeat counts at the new tempo too: prefer the slowest tempo >= 60/0.4? keep n=1
       if(Math.abs(b-Math.round(b)) < b*0.06) b = Math.round(b);
-      if(b <= 400){ out += `bpm(${fmt(b)})`; ntempi++; curDur = 60/b; n = 1; }
+      if(b <= 400){ ntempi++; curDur = 60/b; n = 1; }
       else n = Math.max(1, Math.round(d/curDur));
     }
     for(let i=0;i<n;i++){ dueMarkers(t0r + i*curDur); out += r.id; }
     nchars += n; confs.push(String(n));
   }
   dueMarkers(1e9);
-  const exact = out === renderedText;
+  const heardChars = out.replace(/\n\*(brief |long )?pause\*\n/g,'')
+                        .replace(/\n[^:\n]+: /g,'').replace(/^\n/,'');
+  const exact = heardChars === renderedChars;
   setConfession(out,
-    exact ? `exact round trip \u00b7 ${nchars} characters, ${nsleeps} silences, ${ntempi} tempo changes \u2014 from audio alone`
-          : 'transcription differs \u2014 the machine\u2019s hearing above vs. your score',
+    exact ? `every character heard correctly \u00b7 ${nchars} chars, ${nsleeps} pauses, ${ntempi} tempo shifts \u2014 from audio alone`
+          : 'some characters heard differently \u2014 compare above against your score',
     'run lengths: ' + confs.join(' '));
 };
 
